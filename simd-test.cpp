@@ -207,9 +207,37 @@ int main()
 	std::cout << "Total difference: " << total_difference << std::endl;
 	std::cout << std::endl << std::endl << "Performance (Milliseconds for 100,000,000 iterations):" << std::endl << std::endl;
 
-	std::cout << "| | C	| SSE | AVX2 | AVX512 | NEON |" << std::endl;
-	std::cout << "| --- | --- | --- | --- | --- | --- |" << std::endl;
-	std::cout << "| | " << time_c << " | " << time_sse << " | " << time_avx2 << " | " << time_avx512 << " | " << time_neon << " | " << std::endl;
+	std::cout << "|   C   | SSE  | AVX2 | AVX512 | NEON |" << std::endl;
+	std::cout << "| ----- | ---- | ---- | ------ | ---- |" << std::endl;
+	std::cout << "| " << time_c << " | ";
+	
+	if (sse2_supported)
+		std::cout << time_sse;
+	else
+		std::cout << " N/A ";
+
+	std::cout << " | ";
+
+	if (avx2_supported)
+		std::cout << time_avx2;
+	else
+		std::cout << " N/A ";
+	
+	std::cout << " | ";
+	
+	if (avx512_supported)
+		std::cout << time_avx512;
+	else
+		std::cout << " N/A ";
+	
+	std::cout << " | ";
+	
+	if (neon_supported)
+		std::cout << time_neon;
+	else
+		std::cout << " N/A ";
+	
+	std::cout << " | " << std::endl;
 
 	return 0;
 }
