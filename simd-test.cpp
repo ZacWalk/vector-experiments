@@ -5,6 +5,9 @@
 #include <iostream>
 #include <intrin.h>
 
+#include <functional>
+#include <array>
+
 
 #if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
 #define COMPILE_SIMD_INTRINSIC
@@ -12,6 +15,18 @@
 
 #if defined(_MSC_VER) && defined(_M_ARM64)
 #define COMPILE_ARM_INTRINSIC
+#endif
+
+#ifdef _M_X64
+const auto build_arch = "X64";
+#endif
+
+#ifdef _M_IX86 
+const auto build_arch = "x86";
+#endif
+
+#ifdef _M_ARM64  
+const auto build_arch = "ARM64";
 #endif
 
 static uint64_t now_ms()
@@ -25,10 +40,10 @@ static uint64_t now_ms()
 }
 
 
-static BOOL sse2_supported = ::IsProcessorFeaturePresent(PF_XMMI64_INSTRUCTIONS_AVAILABLE);
-static BOOL avx2_supported = ::IsProcessorFeaturePresent(PF_AVX2_INSTRUCTIONS_AVAILABLE);
-static BOOL avx512_supported = ::IsProcessorFeaturePresent(PF_AVX512F_INSTRUCTIONS_AVAILABLE);
-static BOOL neon_supported = ::IsProcessorFeaturePresent(PF_ARM_NEON_INSTRUCTIONS_AVAILABLE);
+static bool sse2_supported = ::IsProcessorFeaturePresent(PF_XMMI64_INSTRUCTIONS_AVAILABLE) != 0;
+static bool avx2_supported = ::IsProcessorFeaturePresent(PF_AVX2_INSTRUCTIONS_AVAILABLE) != 0;
+static bool avx512_supported = ::IsProcessorFeaturePresent(PF_AVX512F_INSTRUCTIONS_AVAILABLE) != 0;
+static bool neon_supported = ::IsProcessorFeaturePresent(PF_ARM_NEON_INSTRUCTIONS_AVAILABLE) != 0;
 
 static constexpr size_t hash_size = 64;
 
@@ -61,7 +76,7 @@ __forceinline uint64_t distance_c(const vector64_t* v1, const vector64_t* v2)
 	return distance;
 }
 
-__forceinline uint64_t distance_sse(const vector64_t* v1, const vector64_t* v2)
+__forceinline static uint64_t distance_sse(const vector64_t* v1, const vector64_t* v2)
 {
 #ifdef COMPILE_SIMD_INTRINSIC
 	if (sse2_supported)
@@ -89,7 +104,7 @@ __forceinline uint64_t distance_sse(const vector64_t* v1, const vector64_t* v2)
 	return 0;
 }
 
-__forceinline uint64_t distance_avx2(const vector64_t* v1, const vector64_t* v2)
+__forceinline static uint64_t distance_avx2(const vector64_t* v1, const vector64_t* v2)
 {
 #ifdef COMPILE_SIMD_INTRINSIC
 	if (avx2_supported)
@@ -99,7 +114,7 @@ __forceinline uint64_t distance_avx2(const vector64_t* v1, const vector64_t* v2)
 		__m256i d = _mm256_add_epi64(d0, d1);
 		__m128i x = _mm_add_epi64(_mm256_castsi256_si128(d), _mm256_extracti128_si256(d, 1));
 		__m128i r = _mm_add_epi64(x, _mm_unpackhi_epi64(x, x));
-		
+
 #if defined(_M_X64)
 		return _mm_cvtsi128_si64(r);
 #else
@@ -111,7 +126,7 @@ __forceinline uint64_t distance_avx2(const vector64_t* v1, const vector64_t* v2)
 	return 0;
 }
 
-__forceinline uint64_t distance_avx512(const vector64_t* v1, const vector64_t* v2)
+__forceinline static uint64_t distance_avx512(const vector64_t* v1, const vector64_t* v2)
 {
 #ifdef COMPILE_SIMD_INTRINSIC
 	if (avx512_supported)
@@ -124,7 +139,7 @@ __forceinline uint64_t distance_avx512(const vector64_t* v1, const vector64_t* v
 	return 0;
 }
 
-__forceinline uint64_t distance_neon(const vector64_t* v1, const vector64_t* v2)
+__forceinline static uint64_t distance_neon(const vector64_t* v1, const vector64_t* v2)
 {
 #ifdef COMPILE_ARM_INTRINSIC
 	if (neon_supported)
@@ -146,98 +161,300 @@ const vector64_t* make_hash(const char* src)
 	return result;
 }
 
+
+
+///////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////
+
+constexpr uint32_t CRCINIT = 0xFFFFFFFFu;
+
+
+__forceinline static uint32_t calc_crc32c_neon(uint32_t crc, const void* data, const size_t len)
+{
+#if defined(COMPILE_ARM_INTRINSIC)
+	const auto* p = static_cast<const uint8_t*>(data);
+	const auto* const end = p + len;
+
+	while (p < end && (std::bit_cast<uintptr_t>(p) & 0x0f))
+	{
+		crc = __crc32b(crc, *p++);
+	}
+
+	while (p + (sizeof(uint32_t) - 1) < end)
+	{
+		crc = __crc32w(crc, *std::bit_cast<const uint32_t*>(p));
+		p += sizeof(uint32_t);
+	}
+
+	while (p < end)
+	{
+		crc = __crc32b(crc, *p++);
+	}
+#endif
+
+	return crc;
+}
+
+
+__forceinline static uint32_t calc_crc32c_sse(uint32_t crc, const void* data, const size_t len)
+{
+#ifdef COMPILE_SIMD_INTRINSIC
+	const auto* p = static_cast<const uint8_t*>(data);
+	const auto* const end = p + len;
+
+	while (p < end && (std::bit_cast<uintptr_t>(p) & 0x0f))
+	{
+		crc = _mm_crc32_u8(crc, *p++);
+	}
+
+	while (p + (sizeof(uint32_t) - 1) < end)
+	{
+		crc = _mm_crc32_u32(crc, *std::bit_cast<const uint32_t*>(p));
+		p += sizeof(uint32_t);
+	}
+
+	while (p < end)
+	{
+		crc = _mm_crc32_u8(crc, *p++);
+	}
+
+#endif
+
+	return crc;
+}
+
+
+static std::array<std::array<uint32_t, 256>, 4> create_crc32_precalc()
+{
+	// CRC-32C (iSCSI) polynomial in reversed bit order.
+	static constexpr uint32_t CRCPOLY = 0x82f63b78;
+
+	std::array<std::array<uint32_t, 256>, 4> result;
+
+	for (auto i = 0u; i <= 0xFF; i++)
+	{
+		uint32_t x = i;
+
+		for (uint32_t j = 0; j < 8; j++)
+			x = (x >> 1) ^ (CRCPOLY & (-static_cast<int32_t>(x & 1)));
+
+		result[0][i] = x;
+	}
+
+	for (auto i = 0u; i <= 0xFF; i++)
+	{
+		uint32_t c = result[0][i];
+
+		for (auto j = 1u; j < 4; j++)
+		{
+			c = result[0][c & 0xFF] ^ (c >> 8);
+			result[j][i] = c;
+		}
+	}
+
+	return result;
+}
+
+__forceinline static uint32_t calc_crc32c_c(uint32_t crc, const void* data, const size_t len)
+{
+	static const auto crc_precalc = create_crc32_precalc();
+
+	const auto* p = static_cast<const uint8_t*>(data);
+	const auto* const end = p + len;
+
+	while (p < end && std::bit_cast<uintptr_t>(p) & 0x0f)
+	{
+		crc = crc_precalc[0][(crc ^ *p++) & 0xFF] ^ (crc >> 8);
+	}
+
+	while (p + (sizeof(uint32_t) - 1) < end)
+	{
+		crc ^= *std::bit_cast<const uint32_t*>(p);
+		crc =
+			crc_precalc[3][(crc) & 0xFF] ^
+			crc_precalc[2][(crc >> 8) & 0xFF] ^
+			crc_precalc[1][(crc >> 16) & 0xFF] ^
+			crc_precalc[0][(crc >> 24) & 0xFF];
+
+		p += sizeof(uint32_t);
+	}
+
+	while (p < end)
+	{
+		crc = crc_precalc[0][(crc ^ *p++) & 0xFF] ^ (crc >> 8);
+	}
+
+	return crc;
+}
+
+///////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////
+
+static const char* get_machine()
+{
+	SYSTEM_INFO info;
+	::GetNativeSystemInfo(&info);
+
+	switch (info.wProcessorArchitecture)
+	{
+	case PROCESSOR_ARCHITECTURE_AMD64: return "x64";
+	case PROCESSOR_ARCHITECTURE_ARM: return "ARM";
+	case PROCESSOR_ARCHITECTURE_ARM64: return "ARM64";
+	case PROCESSOR_ARCHITECTURE_IA64: return "Intel Itanium-based";
+	case PROCESSOR_ARCHITECTURE_INTEL: return "x86";
+	default:
+		break;
+	}
+
+	return "Unknown";
+}
+
+struct test
+{
+	std::string name;
+	std::function<bool()> run;
+	bool can_run = false;
+	bool success = false;
+};
+
 int main()
 {
 	const auto v1 = make_hash("bq0zgkfbNEhAzGQ2V2W0stbpqQyQ04zrF0TgxmVoJf9O5Wk65EghJBca378cCggd");
 	const auto v2 = make_hash("e0MiFoM5x53XfZrCCKuH1VovqgJatp2qTR6q9UZwHkhAszSnztPzTlhTHR2xiA41");
+	const auto crc_data = "I believe in intuitions and inspirations. I sometimes feel that I am right. I do not know that I am. -- Albert Einstein";
+	const auto crc_data_len = strlen(crc_data);
+	const auto crc_expected = ~0XEC0CEEE5;
 
-	// calculate distance various implimentations
-	const auto dc = distance_c(v1, v2);
-	const auto dsse = distance_sse(v1, v2);
-	const auto davx2 = distance_avx2(v1, v2);
-	const auto davx512 = distance_avx512(v1, v2);
-	const auto dneon = distance_neon(v1, v2);
+	test tests[] =
+	{
+		{ "distance C", [v1, v2] { return distance_c(v1, v2) == 1855; }, true, false },
+		{ "distance SSE", [v1, v2] { return distance_sse(v1, v2) == 1855; }, sse2_supported, false },
+		{ "distance AVX2", [v1, v2] { return distance_avx2(v1, v2) == 1855; }, avx2_supported, false },
+		{ "distance AVX512", [v1, v2] { return distance_avx512(v1, v2) == 1855; }, avx512_supported, false },
+		{ "distance NEON", [v1, v2] { return distance_neon(v1, v2) == 1855; }, neon_supported, false },
 
+		{ "crc32 C", [crc_data, crc_data_len] { return ~calc_crc32c_c(CRCINIT, crc_data, crc_data_len) == crc_expected; }, true, false },
+		{ "crc32 SSE", [crc_data, crc_data_len] { return ~calc_crc32c_sse(CRCINIT, crc_data, crc_data_len) == crc_expected; }, sse2_supported, false },
+		{ "crc32 NEON", [crc_data, crc_data_len] { return ~calc_crc32c_neon(CRCINIT, crc_data, crc_data_len) == crc_expected; }, neon_supported, false },
+	};
+
+	std::cout << "| Host | Build | Test | Result | Time   |" << std::endl;
+	std::cout << "| ---- | ----- | ---- | ------ | ------ |" << std::endl;
+
+	const auto host = get_machine();
 	const auto timing_iterations = 100000000ull;
-	auto total_difference = 0ull; // needed to avoid opptimizing out code	
 
-	// measure time of [timing_iterations] distance calulations
-	auto start_time = now_ms();
-	for (int i = 0ull; i < timing_iterations; i++)
+	for (const auto& t : tests)
 	{
-		total_difference += distance_c(v1, v2);
+		if (t.can_run)
+		{
+			auto success = true;
+			auto start_time = now_ms();
+			for (int i = 0ull; i < timing_iterations; i++)
+			{
+				success = success && t.run();
+			}
+			const auto time = now_ms() - start_time;
+			const auto result = success ? "pass" : "fail";
+			std::cout << "| " << host << " | " << build_arch << " | " << t.name << " | " << result << " | " << time << " | " << std::endl;
+		}
 	}
-	const auto time_c = now_ms() - start_time;
 
-	start_time = now_ms();
-	for (int i = 0ull; i < timing_iterations; i++)
-	{
-		total_difference += distance_sse(v1, v2);
-	}
-	const auto time_sse = now_ms() - start_time;
+	//std::cout << "|   C   | SSE  | AVX2 | AVX512 | NEON |" << std::endl;
+	//std::cout << "| ----- | ---- | ---- | ------ | ---- |" << std::endl;
+	//std::cout << "| " << time_c << " | ";
 
-	start_time = now_ms();
-	for (int i = 0ull; i < timing_iterations; i++)
-	{
-		total_difference += distance_avx2(v1, v2);
-	}
-	const auto time_avx2 = now_ms() - start_time;
+	//// calculate distance various implimentations
+	//const auto dc = distance_c(v1, v2);
+	//const auto dsse = distance_sse(v1, v2);
+	//const auto davx2 = distance_avx2(v1, v2);
+	//const auto davx512 = distance_avx512(v1, v2);
+	//const auto dneon = distance_neon(v1, v2);
 
-	start_time = now_ms();
-	for (int i = 0ull; i < timing_iterations; i++)
-	{
-		total_difference += distance_avx512(v1, v2);
-	}
-	const auto time_avx512 = now_ms() - start_time;
+	//
+	//auto total_difference = 0ull; // needed to avoid opptimizing out code	
 
-	start_time = now_ms();
-	for (int i = 0ull; i < timing_iterations; i++)
-	{
-		total_difference += distance_neon(v1, v2);
-	}
-	const auto time_neon = now_ms() - start_time;
+	//// measure time of [timing_iterations] distance calulations
+	//auto start_time = now_ms();
+	//for (int i = 0ull; i < timing_iterations; i++)
+	//{
+	//	total_difference += distance_c(v1, v2);
+	//}
+	//const auto time_c = now_ms() - start_time;
 
-	// report results
-	std::cout << "Results:" << std::endl << std::endl;
-	std::cout << "Calc distance C:  " << dc << std::endl;
-	std::cout << "Calc distance SSE:  " << dsse << std::endl;
-	std::cout << "Calc distance AVX2:  " << davx2 << std::endl;
-	std::cout << "Calc distance AVX512:  " << davx512 << std::endl;
-	std::cout << "Calc distance NEON: " << dneon << std::endl;
-	std::cout << "Total difference: " << total_difference << std::endl;
-	std::cout << std::endl << std::endl << "Performance (Milliseconds for 100,000,000 iterations):" << std::endl << std::endl;
+	//start_time = now_ms();
+	//for (int i = 0ull; i < timing_iterations; i++)
+	//{
+	//	total_difference += distance_sse(v1, v2);
+	//}
+	//const auto time_sse = now_ms() - start_time;
 
-	std::cout << "|   C   | SSE  | AVX2 | AVX512 | NEON |" << std::endl;
-	std::cout << "| ----- | ---- | ---- | ------ | ---- |" << std::endl;
-	std::cout << "| " << time_c << " | ";
-	
-	if (sse2_supported)
-		std::cout << time_sse;
-	else
-		std::cout << " N/A ";
+	//start_time = now_ms();
+	//for (int i = 0ull; i < timing_iterations; i++)
+	//{
+	//	total_difference += distance_avx2(v1, v2);
+	//}
+	//const auto time_avx2 = now_ms() - start_time;
 
-	std::cout << " | ";
+	//start_time = now_ms();
+	//for (int i = 0ull; i < timing_iterations; i++)
+	//{
+	//	total_difference += distance_avx512(v1, v2);
+	//}
+	//const auto time_avx512 = now_ms() - start_time;
 
-	if (avx2_supported)
-		std::cout << time_avx2;
-	else
-		std::cout << " N/A ";
-	
-	std::cout << " | ";
-	
-	if (avx512_supported)
-		std::cout << time_avx512;
-	else
-		std::cout << " N/A ";
-	
-	std::cout << " | ";
-	
-	if (neon_supported)
-		std::cout << time_neon;
-	else
-		std::cout << " N/A ";
-	
-	std::cout << " | " << std::endl;
+	//start_time = now_ms();
+	//for (int i = 0ull; i < timing_iterations; i++)
+	//{
+	//	total_difference += distance_neon(v1, v2);
+	//}
+	//const auto time_neon = now_ms() - start_time;
+
+	//// report results
+	//std::cout << "Results:" << std::endl << std::endl;
+	//std::cout << "Calc distance C:  " << dc << std::endl;
+	//std::cout << "Calc distance SSE:  " << dsse << std::endl;
+	//std::cout << "Calc distance AVX2:  " << davx2 << std::endl;
+	//std::cout << "Calc distance AVX512:  " << davx512 << std::endl;
+	//std::cout << "Calc distance NEON: " << dneon << std::endl;
+	//std::cout << "Total difference: " << total_difference << std::endl;
+	//std::cout << std::endl << std::endl << "Performance (Milliseconds for 100,000,000 iterations):" << std::endl << std::endl;
+
+	//std::cout << "|   C   | SSE  | AVX2 | AVX512 | NEON |" << std::endl;
+	//std::cout << "| ----- | ---- | ---- | ------ | ---- |" << std::endl;
+	//std::cout << "| " << time_c << " | ";
+
+	//if (sse2_supported)
+	//	std::cout << time_sse;
+	//else
+	//	std::cout << " N/A ";
+
+	//std::cout << " | ";
+
+	//if (avx2_supported)
+	//	std::cout << time_avx2;
+	//else
+	//	std::cout << " N/A ";
+
+	//std::cout << " | ";
+
+	//if (avx512_supported)
+	//	std::cout << time_avx512;
+	//else
+	//	std::cout << " N/A ";
+
+	//std::cout << " | ";
+
+	//if (neon_supported)
+	//	std::cout << time_neon;
+	//else
+	//	std::cout << " N/A ";
+
+	//std::cout << " | " << std::endl;
 
 	return 0;
 }

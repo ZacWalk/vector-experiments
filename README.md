@@ -6,10 +6,11 @@ Implements a routine to calculate the distance (difference) between two 64-byte 
 
 Performance (Milliseconds for 100,000,000 iterations):
 
-| | C   | SSE | AVX2 | AVX512 | NEON |
-| --- | --- | --- | --- | --- | --- |
-| Intel PC x64 | 182 | 102 | 92 | 94 | 0 |
-| Intel PC x86 | 188 | 155 | 159 | 203 | 0 |
-| ARM64 PC | 3529 | 0 | 0 | 0 | 188 |
-| ARM64 PC (Emulated x64) | 407 | 285 | 0 | 0 | 0 |
-| ARM64 PC (Emulated x86) | 489 | 361 | 0 | 0 | 0 |
+| Host | Build | Test | Result | Time   |
+| ---- | ----- | ---- | ------ | ------ |
+| x64 | X64 | distance C | pass | 258 |
+| x64 | X64 | distance SSE | pass | 196 |
+| x64 | X64 | distance AVX2 | pass | 170 |
+| x64 | X64 | distance AVX512 | pass | 167 |
+| x64 | X64 | crc32 C | pass | 5868 |
+| x64 | X64 | crc32 SSE | pass | 1685 |
