@@ -179,18 +179,18 @@ __forceinline static uint32_t calc_crc32c_neon(uint32_t crc, const void* data, c
 
 	while (p < end && (std::bit_cast<uintptr_t>(p) & 0x0f))
 	{
-		crc = __crc32b(crc, *p++);
+		crc = __crc32cb(crc, *p++);
 	}
 
 	while (p + (sizeof(uint32_t) - 1) < end)
 	{
-		crc = __crc32w(crc, *std::bit_cast<const uint32_t*>(p));
+		crc = __crc32cw(crc, *std::bit_cast<const uint32_t*>(p));
 		p += sizeof(uint32_t);
 	}
 
 	while (p < end)
 	{
-		crc = __crc32b(crc, *p++);
+		crc = __crc32cb(crc, *p++);
 	}
 #endif
 
@@ -294,20 +294,30 @@ __forceinline static uint32_t calc_crc32c_c(uint32_t crc, const void* data, cons
 ///////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////
 
+static const char* arch_text(WORD wIamgeFileMachine)
+{
+	switch (wIamgeFileMachine)
+	{
+	case IMAGE_FILE_MACHINE_I386:
+		return "X86";
+	case IMAGE_FILE_MACHINE_AMD64:
+		return "X64";
+	case IMAGE_FILE_MACHINE_ARMNT:
+		return "ARM";
+	case IMAGE_FILE_MACHINE_ARM64:
+		return "ARM64";
+	}
+	return "Unknown";
+}
+
 static const char* get_machine()
 {
-	SYSTEM_INFO info;
-	::GetNativeSystemInfo(&info);
+	USHORT wProcessMachine = 0;
+	USHORT wNativeMachine = 0;
 
-	switch (info.wProcessorArchitecture)
+	if (IsWow64Process2(GetCurrentProcess(), &wProcessMachine, &wNativeMachine) != 0)
 	{
-	case PROCESSOR_ARCHITECTURE_AMD64: return "x64";
-	case PROCESSOR_ARCHITECTURE_ARM: return "ARM";
-	case PROCESSOR_ARCHITECTURE_ARM64: return "ARM64";
-	case PROCESSOR_ARCHITECTURE_IA64: return "Intel Itanium-based";
-	case PROCESSOR_ARCHITECTURE_INTEL: return "x86";
-	default:
-		break;
+		return arch_text(wNativeMachine);
 	}
 
 	return "Unknown";
@@ -363,98 +373,6 @@ int main()
 			std::cout << "| " << host << " | " << build_arch << " | " << t.name << " | " << result << " | " << time << " | " << std::endl;
 		}
 	}
-
-	//std::cout << "|   C   | SSE  | AVX2 | AVX512 | NEON |" << std::endl;
-	//std::cout << "| ----- | ---- | ---- | ------ | ---- |" << std::endl;
-	//std::cout << "| " << time_c << " | ";
-
-	//// calculate distance various implimentations
-	//const auto dc = distance_c(v1, v2);
-	//const auto dsse = distance_sse(v1, v2);
-	//const auto davx2 = distance_avx2(v1, v2);
-	//const auto davx512 = distance_avx512(v1, v2);
-	//const auto dneon = distance_neon(v1, v2);
-
-	//
-	//auto total_difference = 0ull; // needed to avoid opptimizing out code	
-
-	//// measure time of [timing_iterations] distance calulations
-	//auto start_time = now_ms();
-	//for (int i = 0ull; i < timing_iterations; i++)
-	//{
-	//	total_difference += distance_c(v1, v2);
-	//}
-	//const auto time_c = now_ms() - start_time;
-
-	//start_time = now_ms();
-	//for (int i = 0ull; i < timing_iterations; i++)
-	//{
-	//	total_difference += distance_sse(v1, v2);
-	//}
-	//const auto time_sse = now_ms() - start_time;
-
-	//start_time = now_ms();
-	//for (int i = 0ull; i < timing_iterations; i++)
-	//{
-	//	total_difference += distance_avx2(v1, v2);
-	//}
-	//const auto time_avx2 = now_ms() - start_time;
-
-	//start_time = now_ms();
-	//for (int i = 0ull; i < timing_iterations; i++)
-	//{
-	//	total_difference += distance_avx512(v1, v2);
-	//}
-	//const auto time_avx512 = now_ms() - start_time;
-
-	//start_time = now_ms();
-	//for (int i = 0ull; i < timing_iterations; i++)
-	//{
-	//	total_difference += distance_neon(v1, v2);
-	//}
-	//const auto time_neon = now_ms() - start_time;
-
-	//// report results
-	//std::cout << "Results:" << std::endl << std::endl;
-	//std::cout << "Calc distance C:  " << dc << std::endl;
-	//std::cout << "Calc distance SSE:  " << dsse << std::endl;
-	//std::cout << "Calc distance AVX2:  " << davx2 << std::endl;
-	//std::cout << "Calc distance AVX512:  " << davx512 << std::endl;
-	//std::cout << "Calc distance NEON: " << dneon << std::endl;
-	//std::cout << "Total difference: " << total_difference << std::endl;
-	//std::cout << std::endl << std::endl << "Performance (Milliseconds for 100,000,000 iterations):" << std::endl << std::endl;
-
-	//std::cout << "|   C   | SSE  | AVX2 | AVX512 | NEON |" << std::endl;
-	//std::cout << "| ----- | ---- | ---- | ------ | ---- |" << std::endl;
-	//std::cout << "| " << time_c << " | ";
-
-	//if (sse2_supported)
-	//	std::cout << time_sse;
-	//else
-	//	std::cout << " N/A ";
-
-	//std::cout << " | ";
-
-	//if (avx2_supported)
-	//	std::cout << time_avx2;
-	//else
-	//	std::cout << " N/A ";
-
-	//std::cout << " | ";
-
-	//if (avx512_supported)
-	//	std::cout << time_avx512;
-	//else
-	//	std::cout << " N/A ";
-
-	//std::cout << " | ";
-
-	//if (neon_supported)
-	//	std::cout << time_neon;
-	//else
-	//	std::cout << " N/A ";
-
-	//std::cout << " | " << std::endl;
 
 	return 0;
 }
