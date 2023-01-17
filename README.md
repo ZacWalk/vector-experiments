@@ -1,8 +1,8 @@
 # SIMD optimisation and performance 
 
-Some experiments implementing SIMD algorithms on SSE2 and NEON intrinsics.
+Some experiments implementing vectorised algorithms on SSE2 and NEON intrinsics.
 
-Implements a routine to calculate the distance (difference) between two 64-byte vectors. Using C, SSE2 and NEON intrinsics.
+Implements a routine to calculate the distance (difference) between two 64-byte vectors (with benchmarking). Using C, SSE2 and NEON intrinsic instructions. Also, an implementation of crc32.
 
 Performance (Milliseconds for 100,000,000 iterations):
 
