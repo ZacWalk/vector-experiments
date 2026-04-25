@@ -7,6 +7,8 @@
 
 #include <functional>
 #include <array>
+#include <bit>
+#include <cstdint>
 
 
 #if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
@@ -144,20 +146,25 @@ __forceinline static uint64_t distance_neon(const vector64_t* v1, const vector64
 #ifdef COMPILE_ARM_INTRINSIC
 	if (neon_supported)
 	{
-		uint8x16_t d0 = vqaddq_u16(vpaddlq_u8(vabdq_u8(v1->nn[0], v2->nn[0])), vpaddlq_u8(vabdq_u8(v1->nn[1], v2->nn[1])));
-		uint8x16_t d1 = vqaddq_u16(vpaddlq_u8(vabdq_u8(v1->nn[2], v2->nn[2])), vpaddlq_u8(vabdq_u8(v1->nn[3], v2->nn[3])));
-		uint32x4_t result = vpaddlq_u32(vpaddlq_u16(vqaddq_u16(d0, d1)));
-		return vgetq_lane_s64(result, 0) + vgetq_lane_s64(result, 1);
+		// Per-byte absolute difference, widened to 16-bit lane sums.
+		// Max per u16 lane after summing all four chunks: 4 * 2 * 255 = 2040, fits in u16.
+		const uint16x8_t s0 = vpaddlq_u8(vabdq_u8(v1->nn[0], v2->nn[0]));
+		const uint16x8_t s1 = vpaddlq_u8(vabdq_u8(v1->nn[1], v2->nn[1]));
+		const uint16x8_t s2 = vpaddlq_u8(vabdq_u8(v1->nn[2], v2->nn[2]));
+		const uint16x8_t s3 = vpaddlq_u8(vabdq_u8(v1->nn[3], v2->nn[3]));
+		const uint16x8_t sum = vaddq_u16(vaddq_u16(s0, s1), vaddq_u16(s2, s3));
+		return vaddlvq_u16(sum);
 	}
 #endif
 
 	return 0;
 }
 
-const vector64_t* make_hash(const char* src)
+static vector64_t* make_hash(const char* src)
 {
-	auto result = (vector64_t*)_aligned_malloc(hash_size, 16);
-	for (int i = 0; i < hash_size; i++) result->h[i] = src[i];
+	// Aligned to 64 bytes so __m512i loads in the AVX-512 path are safe.
+	auto result = static_cast<vector64_t*>(_aligned_malloc(hash_size, 64));
+	for (size_t i = 0; i < hash_size; i++) result->h[i] = static_cast<uint8_t>(src[i]);
 	return result;
 }
 
@@ -363,16 +370,22 @@ int main()
 		if (t.can_run)
 		{
 			auto success = true;
-			auto start_time = now_ms();
-			for (int i = 0ull; i < timing_iterations; i++)
+			const auto start_time = now_ms();
+			for (uint64_t i = 0; i < timing_iterations; i++)
 			{
-				success = success && t.run();
+				// Use bitwise & (not &&) so the timed function is always invoked,
+				// otherwise a single failure short-circuits all remaining iterations
+				// and the reported time is meaningless.
+				success = static_cast<bool>(static_cast<int>(success) & static_cast<int>(t.run()));
 			}
 			const auto time = now_ms() - start_time;
 			const auto result = success ? "pass" : "fail";
 			std::cout << "| " << host << " | " << build_arch << " | " << t.name << " | " << result << " | " << time << " | " << std::endl;
 		}
 	}
+
+	_aligned_free(const_cast<vector64_t*>(v1));
+	_aligned_free(const_cast<vector64_t*>(v2));
 
 	return 0;
 }
