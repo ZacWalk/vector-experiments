@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "Linux GCC (x64)",     os: ubuntu-latest,    cxx: g++ }
+          - { name: "Linux Clang (x64)",   os: ubuntu-latest,    cxx: clang++ }
+          - { name: "Linux GCC (arm64)",   os: ubuntu-24.04-arm, cxx: g++ }
+          - { name: "Windows MSVC (x64)",  os: windows-latest }
+          - { name: "macOS Clang (arm64)", os: macos-latest,     cxx: clang++ }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Clang
+        if: matrix.cxx == 'clang++' && startsWith(matrix.os, 'ubuntu')
+        run: sudo apt-get update && sudo apt-get install -y clang
+
+      - name: Configure (Release)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.cxx && format('-DCMAKE_CXX_COMPILER={0}', matrix.cxx) || '' }}
+
+      - name: Build (Release)
+        run: cmake --build build --config Release --parallel
+
+      - name: Run benchmarks (smoke test)
+        shell: pwsh
+        run: |
+          # A reduced iteration count keeps CI fast; the program returns a
+          # non-zero exit code if any implementation produces a wrong answer.
+          $exe = Get-ChildItem -Path build -Recurse -File |
+            Where-Object { $_.Name -in @('vector-experiments', 'vector-experiments.exe') } |
+            Select-Object -First 1
+          if (-not $exe) { throw 'Executable not found' }
+          & $exe.FullName 2000000
+          exit $LASTEXITCODE
