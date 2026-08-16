@@ -2,7 +2,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Configure (Release), build and run the vector-experiments benchmarks.
+    Developer driver for vector-experiments: build, run and clean.
 
 .DESCRIPTION
     Uses CMake with the platform's default generator, so it works out of the box:
@@ -11,29 +11,50 @@
       * Linux   : Unix Makefiles with GCC or Clang.
       * macOS   : Unix Makefiles / Xcode with Apple Clang (arm64).
 
-.PARAMETER Iterations
-    Optional iteration count passed straight to the benchmark (handy for a quick
-    smoke run, e.g. -Iterations 5000000). Omit for the full default run.
+    Commands:
+      run      Configure + build (Release) and run the benchmark. (default)
+      build    Configure + build only.
+      clean    Delete the build directory.
+      rebuild  Clean, then build.
+      help     Show this help.
+
+.PARAMETER Command
+    One of run / build / clean / rebuild / help.
+
+.PARAMETER Rest
+    Extra arguments forwarded to the benchmark executable. The first one is the
+    measurement budget in milliseconds per row, e.g. `./dd.ps1 run 50` for a
+    quick smoke run.
 
 .PARAMETER BuildDir
     Build directory (default: build).
 
-.PARAMETER Clean
-    Delete the build directory before configuring.
+.PARAMETER Config
+    CMake build configuration (default: Release).
 
 .EXAMPLE
-    ./run.ps1
+    ./dd.ps1 run
 .EXAMPLE
-    ./run.ps1 -Iterations 5000000 -Clean
+    ./dd.ps1 run 50
+.EXAMPLE
+    ./dd.ps1 rebuild
 #>
 [CmdletBinding()]
 param(
-    [long]$Iterations = 0,
-    [string]$BuildDir = "build",
-    [switch]$Clean
+    [Parameter(Position = 0)]
+    [ValidateSet('run', 'build', 'clean', 'rebuild', 'help')]
+    [string]$Command = 'run',
+
+    [Parameter(Position = 1, ValueFromRemainingArguments = $true)]
+    [string[]]$Rest = @(),
+
+    [string]$BuildDir = 'build',
+
+    [ValidateSet('Release', 'Debug', 'RelWithDebInfo', 'MinSizeRel')]
+    [string]$Config = 'Release'
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = 'Stop'
 $onWindows = ($env:OS -eq 'Windows_NT')
 
 function Find-CMake {
@@ -75,15 +96,28 @@ function Get-VSGenerator {
     return ((($line -replace '^\*', '').Trim()) -replace '\s*=.*$', '').Trim()
 }
 
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
-Push-Location $root
-try {
+function Get-CMakeExe {
     $cmake = Find-CMake
     if (-not $cmake) {
         throw "Could not find 'cmake'. Install CMake, or Visual Studio with the " +
               "'C++ CMake tools for Windows' component, and try again."
     }
     Write-Host "Using cmake: $cmake" -ForegroundColor DarkGray
+    return $cmake
+}
+
+function Invoke-Clean {
+    if (Test-Path $BuildDir) {
+        Write-Host "Cleaning $BuildDir" -ForegroundColor Cyan
+        Remove-Item -Recurse -Force $BuildDir
+    }
+    else {
+        Write-Host "Nothing to clean ($BuildDir does not exist)" -ForegroundColor DarkGray
+    }
+}
+
+function Invoke-Build {
+    $cmake = Get-CMakeExe
 
     # On Windows, prefer the self-contained Visual Studio generator unless we are
     # already inside a Developer Command Prompt. Ninja/NMake builds with MSVC need
@@ -98,38 +132,44 @@ try {
         }
     }
 
-    if ($Clean -and (Test-Path $BuildDir)) {
-        Write-Host "Cleaning $BuildDir" -ForegroundColor Cyan
-        Remove-Item -Recurse -Force $BuildDir
-    }
-
-    Write-Host "Configuring (Release)..." -ForegroundColor Cyan
-    & $cmake -S . -B $BuildDir @genArgs -DCMAKE_BUILD_TYPE=Release
+    Write-Host "Configuring ($Config)..." -ForegroundColor Cyan
+    & $cmake -S . -B $BuildDir @genArgs "-DCMAKE_BUILD_TYPE=$Config"
     if ($LASTEXITCODE -ne 0) {
         # Most commonly a stale build dir created with a different generator.
         Write-Host "Configure failed; wiping '$BuildDir' and retrying clean..." -ForegroundColor Yellow
         Remove-Item -Recurse -Force $BuildDir -ErrorAction SilentlyContinue
-        & $cmake -S . -B $BuildDir @genArgs -DCMAKE_BUILD_TYPE=Release
+        & $cmake -S . -B $BuildDir @genArgs "-DCMAKE_BUILD_TYPE=$Config"
         if ($LASTEXITCODE -ne 0) { throw "CMake configure failed ($LASTEXITCODE)" }
     }
 
-    Write-Host "Building (Release)..." -ForegroundColor Cyan
-    & $cmake --build $BuildDir --config Release --parallel
+    Write-Host "Building ($Config)..." -ForegroundColor Cyan
+    & $cmake --build $BuildDir --config $Config --parallel
     if ($LASTEXITCODE -ne 0) { throw "CMake build failed ($LASTEXITCODE)" }
+}
+
+function Invoke-Run {
+    Invoke-Build
 
     $exe = Get-ChildItem -Path $BuildDir -Recurse -File |
-        Where-Object { $_.Name -in @("vector-experiments", "vector-experiments.exe") } |
+        Where-Object { $_.Name -in @('vector-experiments', 'vector-experiments.exe') } |
         Select-Object -First 1
     if (-not $exe) { throw "Could not find the built executable under $BuildDir" }
 
     Write-Host "Running $($exe.FullName)" -ForegroundColor Cyan
-    if ($Iterations -gt 0) {
-        & $exe.FullName $Iterations
+    if ($Rest.Count -gt 0) { & $exe.FullName @Rest } else { & $exe.FullName }
+    return $LASTEXITCODE
+}
+
+$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+Push-Location $root
+try {
+    switch ($Command) {
+        'run' { exit (Invoke-Run) }
+        'build' { Invoke-Build; exit 0 }
+        'clean' { Invoke-Clean; exit 0 }
+        'rebuild' { Invoke-Clean; Invoke-Build; exit 0 }
+        'help' { Get-Help $MyInvocation.MyCommand.Path -Detailed; exit 0 }
     }
-    else {
-        & $exe.FullName
-    }
-    exit $LASTEXITCODE
 }
 finally {
     Pop-Location

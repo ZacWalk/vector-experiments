@@ -29,14 +29,16 @@ target_sources(vector-experiments PRIVATE
 )
 
 # ---------------------------------------------------------------------------
-# Optimisation flags
+# Optimisation and warning flags
 # ---------------------------------------------------------------------------
 if(MSVC)
   target_compile_options(vector-experiments PRIVATE
+    /W4
     $<$<CONFIG:Release>:/O2>
     $<$<CONFIG:RelWithDebInfo>:/O2>)
 else()
   target_compile_options(vector-experiments PRIVATE
+    -Wall -Wextra
     $<$<CONFIG:Release>:-O3>
     $<$<CONFIG:RelWithDebInfo>:-O2>)
 endif()

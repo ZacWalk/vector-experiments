@@ -15,6 +15,8 @@
 //   * distance_neon     - AArch64 NEON intrinsics
 #pragma once
 
+#include <cstring>
+
 #include "platform.hpp"
 
 #if defined(VEXP_ARCH_X86)
@@ -32,33 +34,21 @@ namespace vexp {
 inline constexpr size_t hash_size = 64;
 
 // 64-byte vector, over-aligned so the widest aligned SIMD load is always legal.
+// Deliberately plain bytes: reading them back through a union of __m128i /
+// __m256i members would be type punning, which C++ (unlike C) does not define.
+// The SIMD paths below load from `h` explicitly instead, which is both well
+// specified and exactly the same instruction.
 struct alignas(64) vector64_t
 {
-    union
-    {
-#if defined(VEXP_ARCH_X86)
-        __m128i mm[hash_size / 16];
-        __m256i a256[hash_size / 32];
-        __m512i a512;
-#endif
-#if defined(VEXP_ARCH_ARM64)
-        uint8x16_t nn[hash_size / 16];
-#endif
-        uint8_t h[hash_size];
-    };
+    uint8_t h[hash_size];
 };
 
-inline vector64_t* make_hash(const char* src)
+inline vector64_t make_hash(const char* src)
 {
-    auto* result = new vector64_t;  // `alignas(64)` is honoured by operator new (C++17)
+    vector64_t v{};
     for (size_t i = 0; i < hash_size; ++i)
-        result->h[i] = static_cast<uint8_t>(src[i]);
-    return result;
-}
-
-inline void free_hash(vector64_t* p)
-{
-    delete p;
+        v.h[i] = static_cast<uint8_t>(src[i]);
+    return v;
 }
 
 // ----------------------------------------------------------------------------
@@ -140,16 +130,18 @@ inline uint64_t distance_vext(const vector64_t* v1, const vector64_t* v2)
 VEXP_TARGET("sse2")
 inline uint64_t distance_sse2(const vector64_t* v1, const vector64_t* v2)
 {
-    __m128i s0 = _mm_sad_epu8(v1->mm[0], v2->mm[0]);
-    __m128i s1 = _mm_sad_epu8(v1->mm[1], v2->mm[1]);
-    __m128i d0 = _mm_add_epi64(s0, s1);
+    const auto* a = reinterpret_cast<const __m128i*>(v1->h);
+    const auto* b = reinterpret_cast<const __m128i*>(v2->h);
 
-    __m128i s2 = _mm_sad_epu8(v1->mm[2], v2->mm[2]);
-    __m128i s3 = _mm_sad_epu8(v1->mm[3], v2->mm[3]);
-    __m128i d1 = _mm_add_epi64(s2, s3);
+    // _mm_sad_epu8 is the whole kernel in one instruction: it sums the absolute
+    // differences of 16 byte lanes into two 64-bit totals.
+    const __m128i d0 = _mm_add_epi64(_mm_sad_epu8(_mm_load_si128(a + 0), _mm_load_si128(b + 0)),
+                                     _mm_sad_epu8(_mm_load_si128(a + 1), _mm_load_si128(b + 1)));
+    const __m128i d1 = _mm_add_epi64(_mm_sad_epu8(_mm_load_si128(a + 2), _mm_load_si128(b + 2)),
+                                     _mm_sad_epu8(_mm_load_si128(a + 3), _mm_load_si128(b + 3)));
 
-    __m128i d = _mm_add_epi64(d0, d1);
-    __m128i r = _mm_add_epi64(d, _mm_unpackhi_epi64(d, d));
+    const __m128i d = _mm_add_epi64(d0, d1);
+    const __m128i r = _mm_add_epi64(d, _mm_unpackhi_epi64(d, d));
 
 #if defined(VEXP_ARCH_X86_64)
     return static_cast<uint64_t>(_mm_cvtsi128_si64(r));
@@ -161,11 +153,15 @@ inline uint64_t distance_sse2(const vector64_t* v1, const vector64_t* v2)
 VEXP_TARGET("avx2")
 inline uint64_t distance_avx2(const vector64_t* v1, const vector64_t* v2)
 {
-    __m256i d0 = _mm256_sad_epu8(v1->a256[0], v2->a256[0]);
-    __m256i d1 = _mm256_sad_epu8(v1->a256[1], v2->a256[1]);
-    __m256i d = _mm256_add_epi64(d0, d1);
-    __m128i x = _mm_add_epi64(_mm256_castsi256_si128(d), _mm256_extracti128_si256(d, 1));
-    __m128i r = _mm_add_epi64(x, _mm_unpackhi_epi64(x, x));
+    const auto* a = reinterpret_cast<const __m256i*>(v1->h);
+    const auto* b = reinterpret_cast<const __m256i*>(v2->h);
+
+    const __m256i d0 = _mm256_sad_epu8(_mm256_load_si256(a + 0), _mm256_load_si256(b + 0));
+    const __m256i d1 = _mm256_sad_epu8(_mm256_load_si256(a + 1), _mm256_load_si256(b + 1));
+    const __m256i d = _mm256_add_epi64(d0, d1);
+
+    const __m128i x = _mm_add_epi64(_mm256_castsi256_si128(d), _mm256_extracti128_si256(d, 1));
+    const __m128i r = _mm_add_epi64(x, _mm_unpackhi_epi64(x, x));
 
 #if defined(VEXP_ARCH_X86_64)
     return static_cast<uint64_t>(_mm_cvtsi128_si64(r));
@@ -177,7 +173,8 @@ inline uint64_t distance_avx2(const vector64_t* v1, const vector64_t* v2)
 VEXP_TARGET("avx512f,avx512bw")
 inline uint64_t distance_avx512(const vector64_t* v1, const vector64_t* v2)
 {
-    __m512i d = _mm512_sad_epu8(v1->a512, v2->a512);
+    // The whole 64-byte vector is one register, so this is a single SAD.
+    const __m512i d = _mm512_sad_epu8(_mm512_load_si512(v1->h), _mm512_load_si512(v2->h));
     return static_cast<uint64_t>(_mm512_reduce_add_epi64(d));
 }
 #endif  // VEXP_ARCH_X86
@@ -190,10 +187,10 @@ inline uint64_t distance_neon(const vector64_t* v1, const vector64_t* v2)
 {
     // Per-byte absolute difference, widened to 16-bit lane sums.
     // Max per u16 lane after summing all four chunks: 4 * 2 * 255 = 2040.
-    const uint16x8_t s0 = vpaddlq_u8(vabdq_u8(v1->nn[0], v2->nn[0]));
-    const uint16x8_t s1 = vpaddlq_u8(vabdq_u8(v1->nn[1], v2->nn[1]));
-    const uint16x8_t s2 = vpaddlq_u8(vabdq_u8(v1->nn[2], v2->nn[2]));
-    const uint16x8_t s3 = vpaddlq_u8(vabdq_u8(v1->nn[3], v2->nn[3]));
+    const uint16x8_t s0 = vpaddlq_u8(vabdq_u8(vld1q_u8(v1->h + 0), vld1q_u8(v2->h + 0)));
+    const uint16x8_t s1 = vpaddlq_u8(vabdq_u8(vld1q_u8(v1->h + 16), vld1q_u8(v2->h + 16)));
+    const uint16x8_t s2 = vpaddlq_u8(vabdq_u8(vld1q_u8(v1->h + 32), vld1q_u8(v2->h + 32)));
+    const uint16x8_t s3 = vpaddlq_u8(vabdq_u8(vld1q_u8(v1->h + 48), vld1q_u8(v2->h + 48)));
     const uint16x8_t sum = vaddq_u16(vaddq_u16(s0, s1), vaddq_u16(s2, s3));
     return vaddlvq_u16(sum);
 }
