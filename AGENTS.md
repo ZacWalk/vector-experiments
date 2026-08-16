@@ -8,7 +8,10 @@ A small, self-contained benchmark that **contrasts a scalar baseline against
 several vectorised implementations** of two kernels, plus a sorting experiment:
 
 - **distance** – sum of absolute differences between two 64-byte vectors.
-- **crc32c** – CRC-32C (Castagnoli) over a buffer.
+- **crc32c** – CRC-32C (Castagnoli) over a buffer. The hardware paths step
+  **8 bytes at a time** (`_mm_crc32_u64` / `__crc32cd`) on 64-bit targets: the CRC
+  chain is strictly serial, so halving the number of steps roughly halves the
+  time. Don't "simplify" these back to the 4-byte form.
 - **sorting** – `std::sort` (quicksort) vs radix / bitonic-network / k-way-merge.
   Two AVX2 variants (runtime-gated by `cpu().avx2`) beat `std::sort`:
   `sort_bitonic_avx2` (8 compare-exchanges per instruction) and `sort_merge_avx2`
@@ -26,8 +29,8 @@ It is a teaching/demo repo (originally an internal SIMD course). The point is th
 | `src/crc32c.hpp`   | CRC32C implementations (table, SSE4.2, ARM hardware). |
 | `src/sorting.hpp`  | Sort experiment: std::sort vs radix / bitonic (scalar + AVX2) / k-way merge / AVX2 merge sort. |
 | `src/main.cpp`     | Benchmark harness + Markdown table output. |
-| `CMakeLists.txt`   | Cross-platform build (C++20). |
-| `run.ps1`          | Configure (Release) + build + run, any platform with `pwsh`. |
+| `CMakeLists.txt`   | Cross-platform build (C++20, `/W4` and `-Wall -Wextra`). |
+| `dd.ps1`           | Dev driver: `run` / `build` / `clean` / `rebuild`, any platform with `pwsh`. |
 | `.github/workflows/ci.yml` | Builds/tests on MSVC, GCC, Clang, Linux arm64, macOS arm64. |
 
 There is **no** Visual Studio solution/project any more — the build is CMake only.
@@ -36,25 +39,27 @@ There is **no** Visual Studio solution/project any more — the build is CMake o
 
 ```pwsh
 # One-shot (Release) build + run:
-./run.ps1                      # full benchmark
-./run.ps1 -Iterations 5000000  # quick run
-./run.ps1 -Clean               # wipe build dir first
+./dd.ps1 run                   # full benchmark
+./dd.ps1 run 50                # quick run (50 ms budget per row)
+./dd.ps1 rebuild               # wipe build dir, then build
 
 # Manual:
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
-./build/vector-experiments [iterations]
+./build/vector-experiments [budget_ms]
 ```
 
-The executable prints a Markdown table and **returns a non-zero exit code if any
-implementation computes a wrong answer** — that is the regression test used by CI.
+The single CLI argument is the **measurement budget in milliseconds per row**
+(default 300), not an iteration count. The executable prints Markdown tables and
+**returns a non-zero exit code if any implementation computes a wrong answer** —
+that is the regression test used by CI.
 
 Supported toolchains: **MSVC, GCC, Clang**. Standard: **C++20**.
 
 ### Testing ARM / other compilers without that hardware
 
 - This machine is Windows + MSVC. Use **WSL (Ubuntu)** for GCC/Clang x64:
-  `wsl -d Ubuntu -- bash -lc "cd /mnt/c/code/vector-experiments && cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Release && cmake --build build-linux -j && ./build-linux/vector-experiments 2000000"`
+  `wsl -d Ubuntu -- bash -lc "cd /mnt/c/code/vector-experiments && cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Release && cmake --build build-linux -j && ./build-linux/vector-experiments 300"`
   Keep a **separate build dir** (`build-linux`) from the Windows `build` dir.
 - **ARM (NEON / vector-ext / ARM-CRC) is validated in CI** on `ubuntu-24.04-arm`
   and `macos-latest` (Apple silicon). You do not need a local ARM machine.
@@ -79,12 +84,38 @@ Supported toolchains: **MSVC, GCC, Clang**. Standard: **C++20**.
   gated by a runtime check.
 - **Keep the scalar baseline scalar.** `distance_scalar` disables
   auto-vectorisation (`VEXP_NO_VECTORIZE_*`); `distance_autovec` is the *same loop*
-  with vectorisation enabled. The pair shows what the auto-vectoriser buys.
-- **Benchmark integrity:** the timing loop uses `vexp::clobber_memory()` /
-  `vexp::do_not_optimize()` so the optimiser can't hoist loop-invariant work out
-  or delete results. Keep them when touching `time_calls`.
-- Allocation is `alignas(64)` + `new` (no `_aligned_malloc`); timing is
-  `std::chrono` (no `QueryPerformanceCounter`). Keep it portable.
+  with vectorisation enabled. The pair shows what the auto-vectoriser buys — and
+  the two compilers disagree sharply: MSVC emits `psadbw` and matches the
+  hand-written SSE2 kernel, GCC unpacks bytes→words→dwords and is ~10x slower.
+  (Verified from disassembly, not inferred.)
+- **`vector64_t` is plain bytes, not a union of `__m128i`/`__m256i`.** Reading one
+  union member after writing another is type punning, which C++ (unlike C) does
+  not define. The SIMD paths load from `h` explicitly — same instruction, no UB.
+- **Benchmark integrity — read this before touching `main.cpp`.** Three
+  properties are load-bearing, and each of them was measurably wrong before:
+  1. Each timing loop carries **its kernel's own `VEXP_TARGET`** (that is what the
+     `VEXP_DISTANCE_BENCH` / `VEXP_CRC_BENCH` macros are for). GCC/Clang will not
+     inline a higher-`target` function into a baseline caller, and GCC appends a
+     `vzeroupper` to AVX functions; measured through that call AVX2 looked
+     *slower* than SSE2. Never demote these back to a plain template or a runtime
+     function pointer.
+  2. The accumulator stays in a register and is passed to `do_not_optimize()`
+     **once, after the loop**. Doing it per iteration adds a store-forwarding
+     stall that flattens every row to the same number.
+  3. `measure()` calibrates a batch size against a time budget and keeps the
+     **fastest of five batches**. Interference only adds time, so the minimum is
+     the honest sample; a single batch varied by 3x on a loaded machine.
+  `clobber_memory()` stays inside the loop so loop-invariant loads can't be
+  hoisted.
+- **How to tell you broke the harness.** MSVC and GCC should land within a few
+  percent of each other on every *hand-written* row (SSE2, AVX2, CRC SSE4.2) —
+  they emit the same instructions, so a 2x disagreement means the harness is
+  measuring scaffolding, not the kernel. Confirm inlining directly with
+  `objdump -dC build-linux/vector-experiments | sed -n '/bench_distance_avx2_loop.*:$/,/^$/p'`
+  — expect `vpsadbw` in the loop body and **no `call`**.
+- Allocation is `alignas(64)` (automatic storage, no `new`); timing is
+  `std::chrono` nanoseconds (no `QueryPerformanceCounter`, and not milliseconds —
+  the fastest kernels here run in ~0.6 ns). Keep it portable.
 
 ## Conventions
 

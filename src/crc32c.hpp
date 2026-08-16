@@ -105,6 +105,24 @@ inline uint32_t calc_crc32c_sse(uint32_t crc, const void* data, size_t len)
     const auto* p = static_cast<const uint8_t*>(data);
     const auto* const end = p + len;
 
+#if defined(VEXP_ARCH_X86_64)
+    // Each crc32 has ~3 cycles of latency and the chain is strictly serial, so
+    // the cost is (number of steps) x latency. Consuming 8 bytes per step instead
+    // of 4 therefore roughly halves the time; the 64-bit form exists for exactly
+    // this reason. Only the low 32 bits of the accumulator are ever significant.
+    uint64_t crc64 = crc;
+    while (p + sizeof(uint64_t) <= end)
+    {
+        uint64_t word;
+        std::memcpy(&word, p, sizeof(word));
+        crc64 = _mm_crc32_u64(crc64, word);
+        p += sizeof(uint64_t);
+    }
+    crc = static_cast<uint32_t>(crc64);
+#endif
+
+    // On x86-64 the loop above leaves at most 7 bytes, so this runs once at
+    // most; on 32-bit x86 it is the main loop.
     while (p + sizeof(uint32_t) <= end)
     {
         uint32_t word;
@@ -128,6 +146,15 @@ inline uint32_t calc_crc32c_arm(uint32_t crc, const void* data, size_t len)
 {
     const auto* p = static_cast<const uint8_t*>(data);
     const auto* const end = p + len;
+
+    // As on x86, the 8-byte step halves the length of the serial CRC chain.
+    while (p + sizeof(uint64_t) <= end)
+    {
+        uint64_t word;
+        std::memcpy(&word, p, sizeof(word));
+        crc = __crc32cd(crc, word);
+        p += sizeof(uint64_t);
+    }
 
     while (p + sizeof(uint32_t) <= end)
     {

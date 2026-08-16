@@ -114,12 +114,15 @@ namespace vexp {
 
 // ----------------------------------------------------------------------------
 // Timing
+//
+// Nanoseconds, not milliseconds: the fastest kernels here run in a couple of
+// nanoseconds, so a millisecond clock would quantise the answer into noise.
 // ----------------------------------------------------------------------------
-inline uint64_t now_ms()
+inline uint64_t now_ns()
 {
     using namespace std::chrono;
     return static_cast<uint64_t>(
-        duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
+        duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count());
 }
 
 // ----------------------------------------------------------------------------
@@ -143,15 +146,24 @@ VEXP_FORCEINLINE void do_not_optimize(const T& value)
 #else
 VEXP_FORCEINLINE void clobber_memory()
 {
+    // MSVC lowers this to _ReadWriteBarrier: no memory access may be cached
+    // across it, so loop-invariant loads cannot be hoisted out of a timing loop.
     std::atomic_signal_fence(std::memory_order_acq_rel);
 }
+
+namespace detail {
+inline volatile uint64_t optimize_sink = 0;
+}
+
 template <class T>
 VEXP_FORCEINLINE void do_not_optimize(const T& value)
 {
-    // Read the value through a volatile lvalue so it must be computed, then a
-    // compiler fence prevents reordering across the consumption point.
-    volatile char sink = *reinterpret_cast<const volatile char*>(&value);
-    (void)sink;
+    // Funnel the value through a volatile store: the compiler must materialise
+    // it, so the computation that produced it cannot be deleted as dead code.
+    static_assert(sizeof(T) <= sizeof(uint64_t), "do_not_optimize expects a scalar");
+    uint64_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(T));
+    detail::optimize_sink = bits;
     std::atomic_signal_fence(std::memory_order_acq_rel);
 }
 #endif
