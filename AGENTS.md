@@ -124,3 +124,25 @@ Supported toolchains: **MSVC, GCC, Clang**. Standard: **C++20**.
 - Everything lives in namespace `vexp`.
 - Don't reintroduce Windows-only APIs into the hot path; OS calls are confined to
   `platform.hpp` behind `#if defined(_WIN32)` / POSIX branches.
+
+## dd build system
+
+This repo uses the vendored dd build system. dd has two modes.
+
+**CLI mode** is the default; each verb runs once and exits:
+
+```pwsh
+.\dd.ps1 test                  # build both configs and run the suite
+.\dd.ps1 build debug
+.\dd.ps1 doctor --json
+.\dd.ps1 commands --json       # list this project's own commands
+```
+
+**MCP mode** — `.\dd.ps1 mcp` turns the process into a stdio JSON-RPC server for an
+MCP client, adapting typed requests onto CLI mode. It owns stdout for protocol
+messages, so it prints no result envelope and rejects `--json`. Register it with
+`.\dd.ps1 ide --mcp`.
+
+Project settings live in `dd.psd1`; dependency pins live in
+`cmake/dd-dependencies.json` with `dependencies.owner = 'dd'`. Vendored dd file
+hashes are recorded in `docs/dd-upstream.json`.
