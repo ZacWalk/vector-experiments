@@ -61,3 +61,10 @@ add_custom_target(run
   COMMAND vector-experiments
   DEPENDS vector-experiments
   USES_TERMINAL)
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(vector_experiments_tests tests/smoke.cpp)
+    add_test(NAME vector_experiments_unit COMMAND vector_experiments_tests)
+    set_tests_properties(vector_experiments_unit PROPERTIES TIMEOUT 30 LABELS vector-experiments)
+endif()

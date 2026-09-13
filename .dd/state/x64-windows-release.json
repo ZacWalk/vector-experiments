@@ -1,0 +1,15 @@
+{
+  "generator": "Ninja",
+  "multiConfig": false,
+  "root": "C:\\code\\apps\\vector-experiments",
+  "files": {
+    "C:\\code\\apps\\vector-experiments\\CMakePresets.json": "556379D800673F4B0E93148CBD19C88BA479626BFF827B08ABBB706F0C647580"
+  },
+  "mapping": {
+    "build": "release",
+    "test": "release",
+    "configure": "release"
+  },
+  "directory": "C:\\code\\apps\\vector-experiments\\build\\release",
+  "manifestHash": "5B8480355232F33C03A273D3784398AAB39F84789F00F190955228533250E7F1"
+}
