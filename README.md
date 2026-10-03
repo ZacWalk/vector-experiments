@@ -116,9 +116,9 @@ Needs CMake and a C++20 compiler (MSVC, GCC or Clang).
 
 ```pwsh
 ./dd.ps1 run                    # configure (Release), build, run
-./dd.ps1 run 50                 # quick run (50 ms budget per row)
-./dd.ps1 build                  # build only
-./dd.ps1 clean                  # wipe the build dir
+./dd.ps1 run -- 50              # quick run (50 ms budget per row)
+./dd.ps1 build                  # build both configurations
+./dd.ps1 clean --yes            # wipe verified build dirs
 ```
 
 `dd.ps1` finds CMake by itself (including the copy bundled with Visual Studio).
