@@ -30,7 +30,7 @@ It is a teaching/demo repo (originally an internal SIMD course). The point is th
 | `src/sorting.hpp`  | Sort experiment: std::sort vs radix / bitonic (scalar + AVX2) / k-way merge / AVX2 merge sort. |
 | `src/main.cpp`     | Benchmark harness + Markdown table output. |
 | `CMakeLists.txt`   | Cross-platform build (C++20, `/W4` and `-Wall -Wextra`). |
-| `dd.ps1`           | Dev driver: `run` / `build` / `clean` / `rebuild`, any platform with `pwsh`. |
+| `dd.ps1`           | Dev driver: `run` / `build` / `test` / `clean`, any platform with `pwsh`. |
 | `.github/workflows/ci.yml` | Builds/tests on MSVC, GCC, Clang, Linux arm64, macOS arm64. |
 
 There is **no** Visual Studio solution/project any more — the build is CMake only.
@@ -40,8 +40,8 @@ There is **no** Visual Studio solution/project any more — the build is CMake o
 ```pwsh
 # One-shot (Release) build + run:
 ./dd.ps1 run                   # full benchmark
-./dd.ps1 run 50                # quick run (50 ms budget per row)
-./dd.ps1 rebuild               # wipe build dir, then build
+./dd.ps1 run -- 50             # quick run (50 ms budget per row)
+./dd.ps1 clean --yes           # wipe verified build dirs
 
 # Manual:
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -59,7 +59,8 @@ Supported toolchains: **MSVC, GCC, Clang**. Standard: **C++20**.
 ### Testing ARM / other compilers without that hardware
 
 - This machine is Windows + MSVC. Use **WSL (Ubuntu)** for GCC/Clang x64:
-  `wsl -d Ubuntu -- bash -lc "cd /mnt/c/code/vector-experiments && cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Release && cmake --build build-linux -j && ./build-linux/vector-experiments 300"`
+  from the repository root, run
+  `wsl -d Ubuntu -- bash -lc 'cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Release && cmake --build build-linux -j && ./build-linux/vector-experiments 300'`.
   Keep a **separate build dir** (`build-linux`) from the Windows `build` dir.
 - **ARM (NEON / vector-ext / ARM-CRC) is validated in CI** on `ubuntu-24.04-arm`
   and `macos-latest` (Apple silicon). You do not need a local ARM machine.
@@ -127,22 +128,20 @@ Supported toolchains: **MSVC, GCC, Clang**. Standard: **C++20**.
 
 ## dd build system
 
-This repo uses the vendored dd build system. dd has two modes.
+This repository carries [dd](https://github.com/ZacWalk/dd) exactly as vendored
+files: `dd.ps1` plus `.dd/`, with hashes recorded in
+[docs/dd-upstream.json](docs/dd-upstream.json). Project settings live in
+`dd.psd1`, dependency pins live in `cmake/dd-dependencies.json` with
+`dependencies.owner = 'dd'`, and `.\dd.ps1 commands --json` lists this
+project's own commands. dd's
+[two modes](https://github.com/ZacWalk/dd/blob/main/docs/mcp.md#two-modes)
+and [commands](https://github.com/ZacWalk/dd/blob/main/docs/cli.md#commands)
+are documented in its own repository.
 
-**CLI mode** is the default; each verb runs once and exits:
+For normal verification:
 
 ```pwsh
-.\dd.ps1 test                  # build both configs and run the suite
-.\dd.ps1 build debug
 .\dd.ps1 doctor --json
-.\dd.ps1 commands --json       # list this project's own commands
+.\dd.ps1 build
+.\dd.ps1 test --label vector-experiments
 ```
-
-**MCP mode** — `.\dd.ps1 mcp` turns the process into a stdio JSON-RPC server for an
-MCP client, adapting typed requests onto CLI mode. It owns stdout for protocol
-messages, so it prints no result envelope and rejects `--json`. Register it with
-`.\dd.ps1 ide --mcp`.
-
-Project settings live in `dd.psd1`; dependency pins live in
-`cmake/dd-dependencies.json` with `dependencies.owner = 'dd'`. Vendored dd file
-hashes are recorded in `docs/dd-upstream.json`.
