@@ -353,8 +353,11 @@ int main(int argc, char** argv)
              t.bench(budget_ns, master.data(), work.data(), scratch.data(), sort_n)});
     }
 
+    char crc_title[48];
+    std::snprintf(crc_title, sizeof(crc_title), "CRC-32C (%zu bytes)", crc_len);
+
     print_table("Distance (64 bytes)", "ns/call", 1.0, distance_rows);
-    print_table("CRC-32C (129 bytes)", "ns/call", 1.0, crc_rows);
+    print_table(crc_title, "ns/call", 1.0, crc_rows);
     print_table("Sort (65,536 x uint32)", "ms/sort", ns_per_ms, sort_rows);
 
     return all_passed ? 0 : 1;
