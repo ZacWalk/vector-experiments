@@ -22,7 +22,7 @@ better). Numbers vary by CPU, compiler and run, but the ordering is stable.
 | SSE2       |  0.91 | 21.9× |  0.91 | 33.1× |
 | AVX2       |  0.59 | 33.9× |  0.60 | 50.4× |
 
-| CRC-32C (129 bytes) | MSVC x64 | vs table | GCC 13 x64 | vs table |
+| CRC-32C (119 bytes) | MSVC x64 | vs table | GCC 13 x64 | vs table |
 | ------------------- | -------: | -------: | ---------: | -------: |
 | table  | 66.88 |  1.0× | 61.26 |  1.0× |
 | SSE4.2 |  4.98 | 13.4× |  4.76 | 12.9× |
