@@ -2,6 +2,9 @@
 # Set default behavior to automatically normalize line endings.
 ###############################################################################
 * text=auto
+# dd's vendored runtime, byte for byte; GitHub should not count it as this project's code
+/dd.ps1 -text linguist-vendored
+/.dd/** -text linguist-vendored
 
 ###############################################################################
 # Set default behavior for command prompt diff.
