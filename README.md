@@ -7,7 +7,7 @@ implementations** of two kernels — sum-of-absolute-differences over 64-byte
 vectors (**distance**) and **CRC-32C** — to show what SIMD actually buys you. A
 further experiment pits `std::sort` against three integer-sort architectures.
 Cross-platform CMake; builds with **MSVC, GCC and Clang** on **x86-64 and
-ARM64**. Originally an internal SIMD course at Microsoft.
+ARM64**.
 
 ## Results
 
@@ -29,9 +29,9 @@ better). Numbers vary by CPU, compiler and run, but the ordering is stable.
 
 **The headline:** hand-written AVX2 does the 64-byte distance in **0.6 ns, ~34×
 faster than the scalar loop** (~50× on GCC), and the hardware **CRC instruction
-is ~13× faster** than a tuned slice-by-4 table. Note that the two compilers agree
-to within a couple of percent on every hand-written row — they are emitting the
-same instructions — and disagree wildly everywhere else.
+is ~13× faster** than a tuned slice-by-4 table. The two compilers agree to
+within a couple of percent on every hand-written row — they emit the same
+instructions — and disagree wildly everywhere else.
 
 The most interesting row is `autovec`, which is *the same source* as `scalar`
 with auto-vectorisation left enabled:
@@ -102,17 +102,17 @@ vectorised variants too: `sort_bitonic_avx2` and a SIMD merge sort,
   bottom-up **vectorised merge sort**: 8-wide in-register block sort, then a
   bitonic 2-way merge that moves 8 elements per step. Being O(N log N) it does
   less work than the bitonic network and is the fastest comparison sort here at
-  **3.2–3.7×**. (The spec's K-way register reduction is the AVX-512 `gather`
+  **3.2–3.7×**. (The AVX-512 design's K-way register reduction is the `gather`
   variant of the same merge idea.)
 
 Takeaway: three of the variants beat quicksort — radix, the vectorised bitonic
 network, and the SIMD merge sort — while only the two deliberately scalar
-baselines trail it. Every run validates each sort against `std::sort`, and the
-ARM / Clang builds are covered in CI.
+baselines trail it. Every run validates each sort against `std::sort`.
 
 ## Build & run
 
-Needs CMake and a C++20 compiler (MSVC, GCC or Clang).
+Needs CMake and a C++20 compiler (MSVC, GCC or Clang); `dd.ps1` needs
+PowerShell 7.4 or later.
 
 ```pwsh
 ./dd.ps1 run                    # configure (Release), build, run
@@ -130,8 +130,9 @@ cmake --build build --config Release
 ./build/vector-experiments      # MSVC: ./build/Release/vector-experiments.exe
 ```
 
-The program exits non-zero if any implementation produces a wrong answer (the CI
-regression gate).
+The program exits non-zero if any implementation produces a wrong answer. That
+is the regression test: CI runs it with a 20 ms budget on every platform in its
+matrix. `./dd.ps1 test` only checks that the project builds.
 
 ## How it is measured
 
@@ -156,10 +157,9 @@ deliberate about three things:
 
 Everything is in [`src/`](src/): `distance.hpp`, `crc32c.hpp` and `sorting.hpp`
 hold the implementations, `main.cpp` is the harness, and `platform.hpp` has the
-arch/compiler macros, timing and CPU detection. The portable `vector-ext` path
-uses GCC/Clang vector extensions (`__attribute__((vector_size(16)))`); the
-higher-ISA paths are gated by per-function target attributes plus a runtime CPU
-check, so one baseline binary dispatches everywhere. Design notes are in
+arch/compiler macros, timing and CPU detection. The higher-ISA paths are gated
+by per-function target attributes plus a runtime CPU check, so one baseline
+binary dispatches everywhere. The rules for changing the code are in
 [AGENTS.md](AGENTS.md).
 
 ## Glossary
@@ -173,3 +173,7 @@ check, so one baseline binary dispatches everywhere. Design notes are in
 - **AVX-512** — 512-bit ZMM registers plus richer mask and reduction instructions (e.g. `_mm512_reduce_add_epi64`).
 - **NEON** — Arm's SIMD instruction set, 128-bit Q-registers (e.g. `uint8x16_t`). Mandatory on AArch64; roughly the ARM equivalent of SSE2.
 - **CRC32C** — Cyclic Redundancy Check using the Castagnoli (iSCSI) polynomial. Both x86 (`_mm_crc32_*`) and ARM64 (`__crc32c*`) provide hardware instructions for it.
+
+## License
+
+[MIT](LICENSE)
